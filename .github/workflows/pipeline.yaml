@@ -1,0 +1,63 @@
+name: "Deploy to Server"
+
+on:
+  push:
+    # Trigger the workflow on push to the main branch
+    branches:
+      - main
+
+jobs:
+  deploy:
+    # Use the latest Ubuntu runner
+    runs-on: ubuntu-latest
+    # Set environment variables for the job
+    env:
+      SERVER_IP: ${{ vars.SERVER_IP }}
+
+    steps:
+      # Checkout the repository to the runner
+      - uses: actions/checkout@v4
+        # Fetch the entire history for all branches and tags to ensure SonarQube has access to all necessary information
+        with:
+          fetch-depth: 0
+
+      - uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: "Build Docker Image"
+        #   Build the Docker image and push it to Docker Hub
+        run: |
+          docker login -u rohanshresthaa -p $DOCKERHUB_PAT
+          docker build -t rohanshresthaa/mywebsite .
+          docker push rohanshresthaa/mywebsite
+        # Set the Docker Hub Personal Access Token as an environment variable for this step
+        env:
+          DOCKERHUB_PAT: ${{ secrets.DOCKERHUB_PAT }}
+
+        # Configure SSH to allow the runner to connect to the server without manual intervention
+      - name: "Configure SSH"
+        # Set up the SSH configuration to allow the runner to connect to the server without manual intervention, such as accepting the host key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+          touch ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+        # Set the SSH key as an environment variable for this step
+      - name: "Put SSH Key in Docker file for Server Access"
+        # Create a PEM file from the base64-encoded SSH key stored in GitHub Secrets, set the appropriate permissions, and remove any existing host key for the server IP to avoid SSH connection issues
+        run: |
+          touch pem.pem
+          echo $SSH_KEY64 | base64 -d > pem.pem && chmod 400 pem.pem
+          ssh-keygen -R $SERVER_IP
+        # Set the base64-encoded SSH key as an environment variable for this step
+        env:
+          SSH_KEY64: ${{ secrets.SSH_KEY64 }}
+        # Pull the latest Docker image from Docker Hub, stop and remove any existing container named "mynginx", and run a new container with the updated image, mapping port 80 on the server to port 80 in the container
+      - name: "Docker Pull and Restart Docker"
+        run: |
+          ssh -t ubuntu@$SERVER_IP -i pem.pem 'docker pull rohanshresthaa/mywebsite'
+          ssh -t ubuntu@$SERVER_IP -i pem.pem 'docker stop mynginx && docker rm mynginx'
+          ssh -t ubuntu@$SERVER_IP -i pem.pem 'docker run --name mynginx -p 80:80 -d rohanshresthaa/mywebsite'

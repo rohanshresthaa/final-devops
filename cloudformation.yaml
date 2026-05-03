@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CloudFormation template to create a VPC, IG, subnet, route table, SG, and EC2 instance.
+
+Parameters:
+  # The KeyPair parameter allows you to specify an existing EC2 Key Pair that will be used for SSH access to the EC2 instance. This is necessary for securely connecting to the instance after it is launched.
+  KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Choose an existing KeyPair
+# The Parameters section defines a parameter named "KeyPair" of type "AWS::EC2::KeyPair::KeyName". This parameter allows the user to specify the name of an existing EC2 Key Pair that will be used for SSH access to the EC2 instance created by this CloudFormation template. The description provides guidance to the user to choose an existing Key Pair, which is essential for securely connecting to the instance after it is launched.
+
+Resources:
+  # The Resources section defines the AWS resources that will be created by this CloudFormation template. It includes a VPC, Internet Gateway, Subnet, Route Table, Security Group, EC2 Instance, and an Elastic IP address. Each resource is defined with its properties and configurations to set up a basic network infrastructure and an EC2 instance that can be accessed via SSH and serves HTTP traffic.
+  VPC:
+    # The VPC resource creates a Virtual Private Cloud with a specified CIDR block, enabling DNS support and hostnames. It is tagged with a name for identification.
+    Type: AWS::EC2::VPC
+    Properties:
+      # The Properties section of the VPC resource defines the configuration for the Virtual Private Cloud. It specifies a CIDR block of
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: LabVPC
+
+  # The InternetGateway resource creates an Internet Gateway that allows communication between the VPC and the internet. It is tagged with a name for identification.
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: LabInternetGateway
+  # The VPCGatewayAttachment resource attaches the Internet Gateway to the VPC, enabling internet connectivity for resources within the VPC.
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: us-east-1a # According to Region
+      Tags:
+        - Key: Name
+          Value: LabSubnet
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: LabRouteTable
+
+  Route:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Subnet
+      RouteTableId: !Ref RouteTable
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH and HTTP traffic
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0 # Allow from any IP
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0 # Allow from any IP
+      Tags:
+        - Key: Name
+          Value: LabSecurityGroup
+
+  EC2Instance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      Tags:
+        - Key: Name
+          Value: MyEC2
+
+      ImageId: ami-084568db4383264d4 # Ubuntu 24.04 LTS in us-east-1 region
+
+      InstanceType: t3.micro # 1 Core CPU, 1 GB RAM, Free Tier
+
+      KeyName: !Ref KeyPair
+
+      # Network settings
+      SubnetId: !Ref Subnet
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+
+      # Configure storage
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          # BlockDeviceMapping-DeviceName needs to be match with AMI specifications.
+          # aws ec2 describe-images --region us-east-1 --image-ids ami-084568db4383264d4
+          Ebs:
+            VolumeType: gp2
+            VolumeSize: 20 # Disk Size in GB
+            DeleteOnTermination: true
+
+      # Advanced details
+      DisableApiTermination: false
+      CreditSpecification:
+        CPUCredits: standard
+
+  ElasticIP:
+    Description: "Elastic IP for the EC2 VM Instance"
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref EC2Instance
+      Tags:
+        - Key: Name
+          Value: LabElasticIP
+
+Outputs:
+  ElasticIPPublicIP:
+    Value: !GetAtt ElasticIP.PublicIp
+    Description: The Public IP address associated with the Elastic IP address.
+  PrivateIp:
+    Value: !GetAtt EC2Instance.PrivateIp
+    Description: The private IP address of the specified instance.
+  PublicDnsName:
+    Value: !GetAtt EC2Instance.PublicDnsName
+    Description: The public DNS name of the specified instance.
+  PublicIp:
+    Value: !GetAtt EC2Instance.PublicIp
+    Description: The public IP address of the specified instance.
